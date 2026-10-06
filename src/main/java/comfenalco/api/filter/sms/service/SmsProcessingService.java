@@ -360,4 +360,213 @@ public class SmsProcessingService {
 
         return "Fecha de envío inválida";
     }
+
+    @Transactional
+    public ProcessResponse release(
+            ProcessRequest request) {
+
+        validateRequest(request);
+
+        List<ValidRecordResponse> validRecords =
+                new ArrayList<ValidRecordResponse>();
+
+        List<DiscardedRecordResponse> discardedRecords =
+                new ArrayList<DiscardedRecordResponse>();
+
+        Set<String> recordsInRequest =
+                new HashSet<String>();
+
+        int discardedByFormat = 0;
+        int discardedByInternalDuplicate = 0;
+        int discardedByDatabaseOccupation = 0;
+
+        for (SmsRecordRequest record
+                : request.getRegistros()) {
+
+            String telefonoNormalizado =
+                    phoneNormalizer.normalize(
+                            record.getTelefono()
+                    );
+
+            LocalDate fechaEnvio =
+                    record.getFechaEnvio();
+
+            String area =
+                    resolveArea(record, request);
+
+            // ---------------------------------------------
+            // 1. VALIDAR TELÉFONO / FECHA
+            // ---------------------------------------------
+
+            if (telefonoNormalizado == null
+                    || fechaEnvio == null) {
+
+                discardedRecords.add(
+                        DiscardedRecordResponse.builder()
+                                .telefonoIngresado(
+                                        record.getTelefono()
+                                )
+                                .telefonoNormalizado(
+                                        telefonoNormalizado
+                                )
+                                .fechaProgramada(
+                                        fechaEnvio
+                                )
+                                .area(area)
+                                .motivoRechazo(
+                                        buildValidationReason(
+                                                telefonoNormalizado,
+                                                fechaEnvio
+                                        )
+                                )
+                                .build()
+                );
+
+                discardedByFormat++;
+
+                continue;
+            }
+
+            // ---------------------------------------------
+            // 2. DUPLICADO EN EL REQUEST
+            // ---------------------------------------------
+
+            String recordKey =
+                    telefonoNormalizado
+                            + "|"
+                            + fechaEnvio;
+
+            if (!recordsInRequest.add(recordKey)) {
+
+                discardedRecords.add(
+                        DiscardedRecordResponse.builder()
+                                .telefonoIngresado(
+                                        record.getTelefono()
+                                )
+                                .telefonoNormalizado(
+                                        telefonoNormalizado
+                                )
+                                .fechaProgramada(
+                                        fechaEnvio
+                                )
+                                .area(area)
+                                .motivoRechazo(
+                                        "Duplicado en el mismo archivo"
+                                )
+                                .build()
+                );
+
+                discardedByInternalDuplicate++;
+
+                continue;
+            }
+
+            // ---------------------------------------------
+            // 3. INTENTAR LIBERAR
+            // ---------------------------------------------
+
+            boolean released =
+                    agendaSmsRepository.release(
+                            telefonoNormalizado,
+                            fechaEnvio,
+                            area
+                    );
+
+            // ---------------------------------------------
+            // 4. RESULTADO
+            // ---------------------------------------------
+
+            if (released) {
+
+                validRecords.add(
+                        ValidRecordResponse.builder()
+                                .telefonoOriginal(
+                                        record.getTelefono()
+                                )
+                                .telefono(
+                                        telefonoNormalizado
+                                )
+                                .fechaProgramada(
+                                        fechaEnvio
+                                )
+                                .area(area)
+                                .estado("Liberado")
+                                .build()
+                );
+
+            } else {
+
+                String areaPropietaria =
+                        agendaSmsRepository.findOwner(
+                                telefonoNormalizado,
+                                fechaEnvio
+                        );
+
+                String motivo;
+
+                if (areaPropietaria == null) {
+
+                    motivo =
+                            "No existe una reserva para "
+                                    + "ese teléfono y fecha";
+
+                } else {
+
+                    motivo =
+                            "El número está ocupado por el área: "
+                                    + areaPropietaria;
+                }
+
+                discardedRecords.add(
+                        DiscardedRecordResponse.builder()
+                                .telefonoIngresado(
+                                        record.getTelefono()
+                                )
+                                .telefonoNormalizado(
+                                        telefonoNormalizado
+                                )
+                                .fechaProgramada(
+                                        fechaEnvio
+                                )
+                                .area(area)
+                                .motivoRechazo(motivo)
+                                .build()
+                );
+
+                discardedByDatabaseOccupation++;
+            }
+        }
+
+        // ---------------------------------------------
+        // 5. RESUMEN
+        // ---------------------------------------------
+
+        SummaryResponse summary =
+                SummaryResponse.builder()
+                        .totalRecordsExcel(
+                                request.getRegistros().size()
+                        )
+                        .validApproved(
+                                validRecords.size()
+                        )
+                        .totalDiscarded(
+                                discardedRecords.size()
+                        )
+                        .discardedByFormat(
+                                discardedByFormat
+                        )
+                        .discardedByInternalDuplicate(
+                                discardedByInternalDuplicate
+                        )
+                        .discardedByDatabaseOccupation(
+                                discardedByDatabaseOccupation
+                        )
+                        .build();
+
+        return ProcessResponse.builder()
+                .summary(summary)
+                .validRecords(validRecords)
+                .discardedRecords(discardedRecords)
+                .build();
+    }
 }

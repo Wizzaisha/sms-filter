@@ -26,4 +26,13 @@ public class SmsProcessingController {
 
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/release")
+    public ResponseEntity<ProcessResponse> release(
+            @RequestBody ProcessRequest request) {
+
+        return ResponseEntity.ok(
+                smsProcessingService.release(request)
+        );
+    }
 }

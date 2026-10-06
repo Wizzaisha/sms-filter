@@ -6,6 +6,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Date;
 import java.time.LocalDate;
+import java.util.List;
 
 @Repository
 @RequiredArgsConstructor
@@ -54,13 +55,38 @@ public class AgendaSmsRepository {
                         "WHERE telefono = ? " +
                         "AND fecha_envio = ?";
 
-        return jdbcTemplate.queryForObject(
+        List<String> result = jdbcTemplate.query(
                 sql,
                 new Object[]{
                         telefono,
                         Date.valueOf(fechaEnvio)
                 },
-                String.class
+                (rs, rowNum) -> rs.getString("area")
         );
+
+        return result.isEmpty()
+                ? null
+                : result.get(0);
+    }
+
+    public boolean release(
+            String telefono,
+            LocalDate fechaEnvio,
+            String area) {
+
+        String sql =
+                "DELETE FROM agenda_sms " +
+                        "WHERE telefono = ? " +
+                        "AND fecha_envio = ? " +
+                        "AND area = ?";
+
+        int affectedRows = jdbcTemplate.update(
+                sql,
+                telefono,
+                Date.valueOf(fechaEnvio),
+                area
+        );
+
+        return affectedRows == 1;
     }
 }
